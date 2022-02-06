@@ -1,0 +1,184 @@
+#!/bin/sh
+
+###############################################################################
+##
+##  by Bahadır ALTINTAŞ
+##
+## Script to create input files for k-point optimizatioın calculation for QauntumEspresso
+###############################################################################
+# run from directory where this script is
+cd `echo $0 | sed 's/\(.*\)\/.*/\1/'` # extract pathname
+EXAMPLE_DIR=`pwd`
+NAME="TiO2_194.kpt"
+NBND=35
+SMEARING="mp"
+DEGAUSS=0.02
+DIAG="cg"
+ECUT=60
+ECUTRHO=`expr $ECUT \\* 4`
+
+TMP_DIR="$EXAMPLE_DIR/tmp"
+BIN_DIR='/home/bahadir/espresso-5.0.2/bin'
+BIN_DIR2='/home/bahadir/espresso-5.0.2-seq/bin'
+
+PSEUDO_DIR='/home/bahadir/pseudos/espresso'
+PARA_PREFIX='mpirun -np 8'
+
+# check whether echo has the -e option
+if test "`echo -e`" = "-e" ; then ECHO=echo ; else ECHO="echo -e" ; fi
+
+# function to test the exit status of a job
+check_failure () {
+    # usage: check_failure $?
+    if test $1 != 0
+    then
+        $ECHO "Error condition encountered during test: exit status = $1"
+        $ECHO "Aborting"
+        exit 1
+    fi
+}
+
+$ECHO
+$ECHO "$EXAMPLE_DIR : starting"
+$ECHO
+$ECHO "This example shows how to calculate electron-phonon interaction"
+$ECHO "coefficients for fcc Al."
+
+# required executables and pseudopotentials
+BIN_LIST="pw.x ph.x"
+PSEUDO_LIST=""
+
+$ECHO
+$ECHO "  executables directory: $BIN_DIR"
+$ECHO "  pseudo directory:      $PSEUDO_DIR"
+$ECHO "  temporary directory:   $TMP_DIR"
+$ECHO "  checking that needed directories and files exist...\c"
+
+# check for directories
+for DIR in "$BIN_DIR" "$PSEUDO_DIR" ; do
+    if test ! -d $DIR ; then
+        $ECHO
+        $ECHO "ERROR: $DIR not existent or not a directory"
+        $ECHO "Aborting"
+        exit 1
+    fi
+done
+for DIR in "$TMP_DIR" "$EXAMPLE_DIR/results" ; do
+    if test ! -d $DIR ; then
+        mkdir $DIR
+    fi
+done
+cd $EXAMPLE_DIR/results
+
+# check for executables
+for FILE in $BIN_LIST ; do
+    if test ! -x $BIN_DIR/$FILE ; then
+        $ECHO
+        $ECHO "ERROR: $BIN_DIR/$FILE not existent or not executable"
+        $ECHO "Aborting"
+        exit 1
+    fi
+done
+
+# check for pseudopotentials
+for FILE in $PSEUDO_LIST ; do
+    if test ! -r $PSEUDO_DIR/$FILE ; then
+       $ECHO
+       $ECHO "Downloading $FILE to $PSEUDO_DIR...\c"
+            $WGET $PSEUDO_DIR/$FILE \
+                http://www.quantum-espresso.org/pseudo/1.3/UPF/$FILE 2> /dev/null 
+    fi
+    if test $? != 0; then
+        $ECHO
+        $ECHO "ERROR: $PSEUDO_DIR/$FILE not existent or not readable"
+        $ECHO "Aborting"
+        exit 1
+    fi
+done
+$ECHO " done"
+
+# how to run executables
+PW_COMMAND="$PARA_PREFIX $BIN_DIR/pw.x $PARA_POSTFIX"
+PH_COMMAND="$PARA_PREFIX $BIN_DIR/ph.x $PARA_POSTFIX"
+$ECHO
+$ECHO "  running pw.x as: $PW_COMMAND"
+$ECHO
+
+# clean TMP_DIR
+$ECHO "  cleaning $TMP_DIR...\c"
+#rm -rf $TMP_DIR/*
+$ECHO "  done"
+#
+#  SCF at k-mesh good enough for phonons
+for kpt in 2 4 6 8 10 12 14 16 18 20 22 24 26 28 30 32;
+do
+cat > $NAME$kpt.in << EOF
+ &CONTROL
+   calculation =   "scf"   ,
+   restart_mode = 'from_scratch' ,
+   outdir='$TMP_DIR/' ,
+   pseudo_dir ='$PSEUDO_DIR/' ,
+   etot_conv_thr = 1.0D-18  ,
+   forc_conv_thr = 1.0D-8 ,
+   prefix='$NAME',
+   tstress=.true.,
+   wf_collect=.true.
+   verbosity='high',
+ /
+ &SYSTEM
+      ibrav= 0,
+!      ibrav = 3, 
+      celldm(1)=1,
+    nat= 6,
+    ntyp= 2,
+    
+                     ecutwfc  = $ECUT ,
+                     ecutrho  =  $ECUTRHO ,
+                 occupations  =  'smearing' ,
+                    smearing  =  '$SMEARING' ,
+                     degauss  =  $DEGAUSS ,
+                        nbnd  =  $NBND
+/
+ &ELECTRONS
+  conv_thr  =  1.0d-12,
+  diagonalization='$DIAG'
+ /
+
+ &IONS
+ ion_dynamics = 'bfgs',
+ /
+ &CELL
+   cell_dynamics = 'bfgs' ,
+   press = 0,
+   cell_factor=1.8,
+   cell_dofree='all',
+ /
+
+
+ATOMIC_SPECIES
+Ti 47.867 Ti.pbe-sp-van_ak.UPF
+O  15.9994 O.pbe-van_ak.UPF
+
+CELL_PARAMETERS (alat=  1.00000000)
+   6.153084858   0.000000000  -0.000000000
+  -3.076542428   5.328727798   0.000000000
+   0.000000000   0.000000000  11.534595230
+
+ATOMIC_POSITIONS (crystal)
+Ti       0.333333343   0.666666687   0.750000473
+Ti       0.666666627   0.333333313   0.249999527
+O        0.333333343   0.666666687   0.249999118
+O        0.666666627   0.333333313   0.750000882
+O       -0.000000000  -0.000000000   0.000000000
+O        0.000000000   0.000000000   0.500000000
+
+K_POINTS automatic
+
+$kpt $kpt $kpt 1 1 1
+
+EOF
+$PW_COMMAND < $NAME$kpt.in > $NAME$kpt.out
+#check_failure $?
+$ECHO "  done"
+
+done
