@@ -1,0 +1,246 @@
+#!/bin/sh
+
+###############################################################################
+##
+## by Bahadır ALTINTAŞ
+## Script for input file creation and runnin on MPI cluster for QuantumEspresso
+## 
+##
+###############################################################################
+# run from directory where this script is
+cd `echo $0 | sed 's/\(.*\)\/.*/\1/'` # extract pathname
+EXAMPLE_DIR=`pwd`
+NAME="TiN_B2.elphon16x2"
+NBND=30
+SMEARING="mp"
+DEGAUSS=0.01
+DIAG="cg"
+ECUT=42
+ECUTRHO=`expr $ECUT \\* 4`
+K_POINTS="16 16 16 0 0 0"
+
+TMP_DIR="$EXAMPLE_DIR/tmp"
+BIN_DIR='/home/bahadir/espresso-5.0.2/bin'
+BIN_DIR2='/home/bahadir/espresso-5.0.2/bin'
+
+PSEUDO_DIR='/home/bahadir/pseudos/espresso'
+PARA_PREFIX='mpirun -np 8'
+
+# check whether echo has the -e option
+if test "`echo -e`" = "-e" ; then ECHO=echo ; else ECHO="echo -e" ; fi
+
+# function to test the exit status of a job
+check_failure () {
+    # usage: check_failure $?
+    if test $1 != 0
+    then
+        $ECHO "Error condition encountered during test: exit status = $1"
+        $ECHO "Aborting"
+        exit 1
+    fi
+}
+
+$ECHO
+$ECHO "$EXAMPLE_DIR : starting"
+$ECHO
+$ECHO "This example shows how to calculate electron-phonon interaction"
+$ECHO "coefficients for fcc Al."
+
+# required executables and pseudopotentials
+BIN_LIST="pw.x bands.x"
+PSEUDO_LIST=""
+
+$ECHO
+$ECHO "  executables directory: $BIN_DIR"
+$ECHO "  pseudo directory:      $PSEUDO_DIR"
+$ECHO "  temporary directory:   $TMP_DIR"
+$ECHO "  checking that needed directories and files exist...\c"
+
+# check for directories
+for DIR in "$BIN_DIR" "$PSEUDO_DIR" ; do
+    if test ! -d $DIR ; then
+        $ECHO
+        $ECHO "ERROR: $DIR not existent or not a directory"
+        $ECHO "Aborting"
+        exit 1
+    fi
+done
+for DIR in "$TMP_DIR" "$EXAMPLE_DIR/results" ; do
+    if test ! -d $DIR ; then
+        mkdir $DIR
+    fi
+done
+cd $EXAMPLE_DIR/results
+
+# check for executables
+for FILE in $BIN_LIST ; do
+    if test ! -x $BIN_DIR/$FILE ; then
+        $ECHO
+        $ECHO "ERROR: $BIN_DIR/$FILE not existent or not executable"
+        $ECHO "Aborting"
+        exit 1
+    fi
+done
+
+# check for pseudopotentials
+for FILE in $PSEUDO_LIST ; do
+    if test ! -r $PSEUDO_DIR/$FILE ; then
+       $ECHO
+       $ECHO "Downloading $FILE to $PSEUDO_DIR...\c"
+            $WGET $PSEUDO_DIR/$FILE \
+                http://www.quantum-espresso.org/pseudo/1.3/UPF/$FILE 2> /dev/null 
+    fi
+    if test $? != 0; then
+        $ECHO
+        $ECHO "ERROR: $PSEUDO_DIR/$FILE not existent or not readable"
+        $ECHO "Aborting"
+        exit 1
+    fi
+done
+$ECHO " done"
+
+# how to run executables
+PW_COMMAND="$PARA_PREFIX $BIN_DIR/pw.x $PARA_POSTFIX"
+BANDS_COMMAND="$PARA_PREFIX $BIN_DIR/bands.x $PARA_POSTFIX"
+DOS_COMMAND="$BIN_DIR2/dos.x $PARA_POSTFIX"
+PH_COMMAND="$PARA_PREFIX $BIN_DIR/ph.x"
+$ECHO
+$ECHO "  running pw.x as: $PW_COMMAND"
+$ECHO
+
+# clean TMP_DIR
+$ECHO "  cleaning $TMP_DIR...\c"
+#rm -rf $TMP_DIR/*
+$ECHO "  done"
+#
+#  SCF at k-mesh good enough for phonons
+#
+cat > $NAME.scf.fit.in << EOF
+ &CONTROL
+   calculation =   "scf"   ,
+   restart_mode = 'from_scratch' ,
+   outdir='$TMP_DIR/' ,
+   pseudo_dir ='$PSEUDO_DIR/' ,
+   etot_conv_thr = 1.0D-18  ,
+   forc_conv_thr = 1.0D-8 ,
+   prefix='$NAME',
+   tstress=.true.,
+   wf_collect=.true.
+ /
+ &SYSTEM
+    ibrav= 0,
+    celldm(1)=1,
+    nat= 2,
+    ntyp= 2,
+    la2f=.true.
+                     ecutwfc  = $ECUT ,
+                     ecutrho  =  $ECUTRHO ,
+                 occupations  =  'smearing' ,
+                    smearing  =  '$SMEARING' ,
+                     degauss  =  $DEGAUSS ,
+                        nbnd  =  $NBND
+/
+ &ELECTRONS
+  conv_thr  =  1.0d-12,
+  diagonalization='$DIAG'
+ /
+
+
+ATOMIC_SPECIES
+Ti 47.867 Ti.pz-sp-van.UPF
+N 14.0067 N.pz-van_ak.UPF
+
+CELL_PARAMETERS (alat=  1.00000000)
+   4.866161901   0.000000000   0.000000000
+   0.000000000   4.866161901   0.000000000
+   0.000000000   0.000000000   4.866161901
+
+ATOMIC_POSITIONS (crystal)
+Ti       0.000000000   0.000000000   0.000000000
+N        0.500000000   0.500000000   0.500000000
+
+K_POINTS automatic
+
+$K_POINTS
+
+EOF
+$PW_COMMAND < $NAME.scf.fit.in > $NAME.scf.fit.out
+$ECHO "  done"
+#
+#  NSCF at k-mesh good enough for phonons
+#
+cat > $NAME.scf.in << EOF
+ &CONTROL
+   calculation =   "scf"   ,
+   restart_mode = 'from_scratch' ,
+   outdir='$TMP_DIR/' ,
+   pseudo_dir ='$PSEUDO_DIR/' ,
+   etot_conv_thr = 1.0D-18  ,
+   forc_conv_thr = 1.0D-8 ,
+   prefix='$NAME',
+   tstress=.true.,
+   wf_collect=.true.
+ /
+ &SYSTEM
+    ibrav= 0,
+    celldm(1)=1,
+    nat= 2,
+    ntyp= 2,
+                     ecutwfc  = $ECUT ,
+                     ecutrho  =  $ECUTRHO ,
+                 occupations  =  'smearing' ,
+                    smearing  =  '$SMEARING' ,
+                     degauss  =  $DEGAUSS ,
+                        nbnd  =  $NBND
+/
+ &ELECTRONS
+  conv_thr  =  1.0d-12,
+  diagonalization='$DIAG'
+ /
+
+
+ATOMIC_SPECIES
+Ti 47.867 Ti.pz-sp-van.UPF
+N 14.0067 N.pz-van_ak.UPF
+
+CELL_PARAMETERS (alat=  1.00000000)
+   4.866161901   0.000000000   0.000000000
+   0.000000000   4.866161901   0.000000000
+   0.000000000   0.000000000   4.866161901
+
+ATOMIC_POSITIONS (crystal)
+Ti       0.000000000   0.000000000   0.000000000
+N        0.500000000   0.500000000   0.500000000
+
+K_POINTS automatic
+
+$K_POINTS
+
+EOF
+$PW_COMMAND < $NAME.scf.in > $NAME.scf.out
+$ECHO "  done"
+
+#
+# PHONON calculation
+#
+
+cat > $NAME.in << EOF
+phonons of $NAME at Gamma
+ &inputph
+  tr2_ph=1.0d-12,
+  prefix='$NAME',
+  fildvscf='$NAME.scfdv',
+  fildyn='$NAME.dyn',
+  amass(1)=47.867,
+  amass(2)=14.0067,
+  outdir='$TMP_DIR/',
+  electron_phonon='interpolated',
+  trans=.true.,
+  ldisp=.true.,
+  nq1=2, nq2=2, nq3=2
+ /
+
+EOF
+$ECHO "  running the phonon calculation at Gamma for $NAME...\c"
+$PH_COMMAND < $NAME.in > $NAME.out
+$ECHO " done"
