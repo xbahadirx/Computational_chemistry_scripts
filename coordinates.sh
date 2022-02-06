@@ -1,7 +1,8 @@
 #!/bin/bash
 
 #by Bahadır ALTINTAŞ
-#Bash script to extract optimized coordinates form QuantumEspresso geometry optimization output file with given PREFIX eg "ZrO2_189"
+#Bash script to extract optimized coordinates from QuantumEspresso geometry optimization output file with given PREFIX eg "ZrO2_189"
+
 PREFIX="ZrO2_189"
 for p in 0 ;
 do
